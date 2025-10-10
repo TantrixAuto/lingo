@@ -1,0 +1,53 @@
+//import "h.lingo";
+
+var var1 = 10;
+var var2 = 21 + 22;
+var var3 = 31 * 32;
+var var4 = 41 + 42 * 43;
+var var5 = 51 * 52 + 53;
+var var6 = 61 + 62 + 63;
+var var7 = 71 + 72 - 73;
+
+var v8 = var1;
+
+if(v8 > 10) {
+    v8 = var1;
+    print("hi1\n");
+}
+
+if(var2 < 10) {
+    v8 = var2;
+    print("hi2\n");
+}else{
+    v8 = var3;
+}
+
+/*
+This is a ML comment
+*/
+
+/*
+This is a outer ML comment
+/*
+This is a inner ML comment
+*/
+*/
+
+// this is a SL comment
+
+print("hi3: from {a} and {b}\n", a=10, b=12);
+
+var idx = 2;
+while(idx < 10) {
+    idx = idx + 1;
+    print("hi4:{a}\n", a=idx);
+}
+print("hi5\n");
+
+(int i, int j) add(int x, int y) {
+    print("adding:{x} + {y}\n", x=x, y=y);
+    return (i=x + y, j = y - x);
+}
+
+var r = add(x=1, y=2);
+print("added:i={i}, j={j}\n", r);
