@@ -1,4 +1,4 @@
-//import "h.lingo";
+import "h.lingo";
 
 var var1 = 10;
 var var2 = 21 + 22;
@@ -45,9 +45,13 @@ while(idx < 10) {
 print("hi5\n");
 
 (int i, int j) add(int x, int y) {
+    print("hi6.1\n");
     print("adding:{x} + {y}\n", x=x, y=y);
+    print("hi6.2\n");
     return (i=x + y, j = y - x);
 }
 
+print("hi7\n");
 var r = add(x=1, y=2);
+print("hi8\n");
 print("added:i={i}, j={j}\n", r);

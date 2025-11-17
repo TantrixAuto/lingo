@@ -1,10 +1,10 @@
 %class LingoModule;
-%fallback ID IF VAR;
 
-%walkers Walker;
-%walker_traversal Walker manual;
+%walkers Interpreter;
 
-%members Walker %{
+%members Interpreter %{
+    using Token = LingoModule_AST::Token;
+    using Error = LingoModule::Error;
     struct TupleItem;
     struct DataType;
 
@@ -131,7 +131,7 @@
     };
 
     std::unordered_map<std::string, std::unique_ptr<TAG(CLASSQID)>> mods;
-     std::vector<std::unique_ptr<StatementBlock>> blocks;
+    std::vector<std::unique_ptr<StatementBlock>> blocks;
     std::unordered_map<std::string, std::unique_ptr<FunctionDecl>> fns;
 
     inline std::string str(const DataType& dt) {
@@ -214,10 +214,14 @@
     }
 
     inline void addImport(const Token& f, const std::string& n) {
-        std::print("importing {} as {}\n", f.text, n);
-        std::ifstream is(f.text);
+        auto pdir = std::filesystem::path(f.pos.file).parent_path();
+        auto fpath = pdir / f.text;
+        fpath = std::filesystem::canonical(fpath);
+        
+        std::println("importing {} as {}", fpath.string(), n);
+        std::ifstream is(fpath);
         if(!is) {
-            throw Error(f.pos.row, f.pos.col, f.pos.file, "cannot open file:{}", f.text);
+            throw Error(f.pos.row, f.pos.col, f.pos.file, "cannot open file:{}", fpath.string());
         }
 
         auto m = std::make_unique<TAG(CLASSQID)>(n);
@@ -365,16 +369,17 @@ start := stmts(s)
     go(s);
 %}
 
-stmts := stmts(sl) stmt(s)
+stmts := stmts stmt;
+stmts := stmt;
+stmts := ;
+
+stmt_block := LCURLY stmts(s) RCURLY
 %{
-    go(sl);
+    StatementBlockGuard bg(blocks);
     go(s);
 %}
 
-stmts := stmt(s)
-%{
-    go(s);
-%}
+stmt_block := LCURLY RCURLY;
 
 stmt := IMPORT STRING(F) AS ID(N) SEMI
 %{
@@ -394,6 +399,7 @@ stmt := argsx(out) ID(NAME) argsx(in) stmt_block(body)
     fn.in = go(in);
     fn.out = go(out);
     fn.body = &(body.node);
+    skip(body);
 %}
 
 %function argsx -> std::vector<ArgDef>;
@@ -432,13 +438,6 @@ arg := type(nt) ID(I)
     return ArgDef(t, I);
 %}
 
-stmt_block := LCURLY stmts(s) RCURLY
-%{
-    StatementBlockGuard bg(blocks);
-    go(s);
-%}
-
-stmt_block := LCURLY RCURLY;
 
 stmt := expr(e) SEMI
 %{
@@ -463,7 +462,7 @@ stmt := ID(V) ASSIGN expr(ne) SEMI
     setVar(V, e);
 %}
 
-stmt := IF LBRACKET l_expr(ne) RBRACKET stmt_block(tsb)
+stmt := IF LBRACKET logical_expr(ne) RBRACKET stmt_block(tsb)
 %{
     auto e = go(ne);
     if(boolValue(e) == true) {
@@ -471,7 +470,7 @@ stmt := IF LBRACKET l_expr(ne) RBRACKET stmt_block(tsb)
     }
 %}
 
-stmt := IF LBRACKET l_expr(ne) RBRACKET stmt_block(tsb) ELSE stmt_block(fsb)
+stmt := IF LBRACKET logical_expr(ne) RBRACKET stmt_block(tsb) ELSE stmt_block(fsb)
 %{
     auto e = go(ne);
     if(boolValue(e) == true) {
@@ -481,7 +480,7 @@ stmt := IF LBRACKET l_expr(ne) RBRACKET stmt_block(tsb) ELSE stmt_block(fsb)
     }
 %}
 
-stmt := WHILE LBRACKET l_expr(ne) RBRACKET LCURLY stmts(tsb) RCURLY
+stmt := WHILE LBRACKET logical_expr(ne) RBRACKET LCURLY stmts(tsb) RCURLY
 %{
     while(true) {
         auto e = go(ne);
@@ -494,14 +493,14 @@ stmt := WHILE LBRACKET l_expr(ne) RBRACKET LCURLY stmts(tsb) RCURLY
 %}
 
 %function expr -> DataType;
-expr := l_expr(nl)
+expr := logical_expr(e)
 %{
-    auto l = go(nl);
-    return l;
+    auto v = go(e);
+    return v;
 %}
 
-%function l_expr -> DataType;
-l_expr := l_expr(nl) AND l_expr(nr)
+%function logical_expr -> DataType;
+logical_expr := logical_expr(nl) AND logical_expr(nr)
 %{
     auto l = go(nl);
     if(boolValue(l) == false) {
@@ -511,7 +510,7 @@ l_expr := l_expr(nl) AND l_expr(nr)
     return boolValue(r);
 %}
 
-l_expr := l_expr(nl) OR l_expr(nr)
+logical_expr := logical_expr(nl) OR logical_expr(nr)
 %{
     auto l = go(nl);
     if(boolValue(l) == true) {
@@ -521,105 +520,69 @@ l_expr := l_expr(nl) OR l_expr(nr)
     return boolValue(r);
 %}
 
-l_expr := NOT l_expr(nl)
+logical_expr := NOT logical_expr(nl)
 %{
     auto l = go(nl);
     return (boolValue(l) == false);
 %}
 
-l_expr := c_expr(nl)
+logical_expr := conditional_expr(nl)
 %{
     auto l = go(nl);
     return l;
 %}
 
-%function c_expr -> DataType;
-c_expr := c_expr(nl) EQ c_expr(nr)
+%function conditional_expr -> DataType;
+conditional_expr := conditional_expr(nl) EQ add_expr(nr)
 %{
     auto l = go(nl);
     auto r = go(nr);
     return compare(l, r) == 0;
 %}
 
-c_expr := c_expr(nl) NEQ c_expr(nr)
+conditional_expr := conditional_expr(nl) NEQ add_expr(nr)
 %{
     auto l = go(nl);
     auto r = go(nr);
     return compare(l, r) != 0;
 %}
 
-c_expr := c_expr(nl) LTE c_expr(nr)
+conditional_expr := conditional_expr(nl) LTE add_expr(nr)
 %{
     auto l = go(nl);
     auto r = go(nr);
     return compare(l, r) <= 0;
 %}
 
-c_expr := c_expr(nl) GTE c_expr(nr)
+conditional_expr := conditional_expr(nl) GTE add_expr(nr)
 %{
     auto l = go(nl);
     auto r = go(nr);
     return compare(l, r) >= 0;
 %}
 
-c_expr := c_expr(nl) LT c_expr(nr)
+conditional_expr := conditional_expr(nl) LT add_expr(nr)
 %{
     auto l = go(nl);
     auto r = go(nr);
     return compare(l, r) < 0;
 %}
 
-c_expr := c_expr(nl) GT c_expr(nr)
+conditional_expr := conditional_expr(nl) GT add_expr(nr)
 %{
     auto l = go(nl);
     auto r = go(nr);
     return compare(l, r) > 0;
 %}
 
-c_expr := a_expr(nl)
+conditional_expr := add_expr(nl)
 %{
     auto l = go(nl);
     return l;
 %}
 
-%function a_expr -> DataType;
-a_expr := a_expr(nl) PERCENT a_expr(nr)
-%{
-    auto l = go(nl);
-    auto r = go(nr);
-    if(auto pl = l.ptr<int64_t>()) {
-        if(auto pr = r.ptr<int64_t>()) {
-            return *pl % *pr;
-        }
-    }
-    throw Error(nl.node.pos.row, nl.node.pos.col, nl.node.pos.file, "invalid operands for % operator");
-%}
-
-a_expr := a_expr(nl) STAR a_expr(nr)
-%{
-    auto l = go(nl);
-    auto r = go(nr);
-    if(auto pl = l.ptr<int64_t>()) {
-        if(auto pr = r.ptr<int64_t>()) {
-            return *pl * *pr;
-        }
-    }
-    throw Error(nl.node.pos.row, nl.node.pos.col, nl.node.pos.file, "invalid operands for * operator");
-%}
-
-a_expr := a_expr(nl) FSLASH a_expr(nr)
-%{
-    auto l = go(nl);
-    auto r = go(nr);
-    if(auto pl = l.ptr<int64_t>()) {
-        if(auto pr = r.ptr<int64_t>()) {
-            return *pl / *pr;
-        }
-    }
-    throw Error(nl.node.pos.row, nl.node.pos.col, nl.node.pos.file, "invalid operands for / operator");
-%}
-
-a_expr := a_expr(nl) PLUS a_expr(nr)
+%function add_expr -> DataType;
+add_expr := add_expr(nl) PLUS multiply_expr(nr)
 %{
     auto l = go(nl);
     auto r = go(nr);
@@ -636,7 +599,7 @@ a_expr := a_expr(nl) PLUS a_expr(nr)
     throw Error(nl.node.pos.row, nl.node.pos.col, nl.node.pos.file, "invalid operands for + operator");
 %}
 
-a_expr := a_expr(nl) MINUS a_expr(nr)
+add_expr := add_expr(nl) MINUS multiply_expr(nr)
 %{
     auto l = go(nl);
     auto r = go(nr);
@@ -648,47 +611,106 @@ a_expr := a_expr(nl) MINUS a_expr(nr)
     throw Error(nl.node.pos.row, nl.node.pos.col, nl.node.pos.file, "invalid operands for - operator");
 %}
 
-a_expr := PRINT LBRACKET STRING(S) COMMA tuple(np) RBRACKET
+add_expr := multiply_expr(e)
+%{
+    auto v = go(e);
+//    std::println("add_expr:{}", v);
+    return v;
+%}
+
+%function multiply_expr -> DataType;
+multiply_expr := multiply_expr(nl) STAR primary_expr(nr)
+%{
+    auto l = go(nl);
+    auto r = go(nr);
+    if(auto pl = l.ptr<int64_t>()) {
+        if(auto pr = r.ptr<int64_t>()) {
+            return *pl * *pr;
+        }
+    }
+    throw Error(nl.node.pos.row, nl.node.pos.col, nl.node.pos.file, "invalid operands for * operator");
+%}
+
+multiply_expr := multiply_expr(nl) PERCENT primary_expr(nr)
+%{
+    auto l = go(nl);
+    auto r = go(nr);
+    if(auto pl = l.ptr<int64_t>()) {
+        if(auto pr = r.ptr<int64_t>()) {
+            return *pl % *pr;
+        }
+    }
+    throw Error(nl.node.pos.row, nl.node.pos.col, nl.node.pos.file, "invalid operands for % operator");
+%}
+
+multiply_expr := multiply_expr(nl) FSLASH primary_expr(nr)
+%{
+    auto l = go(nl);
+    auto r = go(nr);
+    if(auto pl = l.ptr<int64_t>()) {
+        if(auto pr = r.ptr<int64_t>()) {
+            return *pl / *pr;
+        }
+    }
+    throw Error(nl.node.pos.row, nl.node.pos.col, nl.node.pos.file, "invalid operands for / operator");
+%}
+
+multiply_expr := primary_expr(e)
+%{
+    auto v = go(e);
+    return v;
+%}
+
+%function primary_expr -> DataType;
+primary_expr := LBRACKET expr(e) RBRACKET
+%{
+    auto v = go(e);
+    return v;
+%}
+
+primary_expr := ID(I)
+%{
+    return getVar(I);
+%}
+
+primary_expr := NUM(N)
+%{
+    auto v = std::stoi(N.text);
+    return v;
+%}
+
+primary_expr := STRING(N)
+%{
+    auto v = N.text;
+    return v;
+%}
+
+primary_expr := PRINT LBRACKET STRING(S) COMMA tuple(np) RBRACKET
 %{
     auto p = go(np);
-    std::print("{}", fmt(S, p));
+    std::print("1>{}", fmt(S, p));
     return 0;
 %}
 
-a_expr := PRINT LBRACKET STRING(S) COMMA a_expr(np) RBRACKET
+primary_expr := PRINT LBRACKET STRING(S) COMMA expr(np) RBRACKET
 %{
     auto p = go(np);
     if(auto v = p.ptr<Tuple>()) {
-        std::print("{}", fmt(S, *v));
+        std::print("2>{}", fmt(S, *v));
     }else{
         std::print("{}:<not a tuple>", S.text);
     }
     return 0;
 %}
 
-a_expr := PRINT LBRACKET STRING(S) RBRACKET
+primary_expr := PRINT LBRACKET STRING(S) RBRACKET
 %{
-    std::print("{}", fmt(S, {}));
+    std::print("3>{}", fmt(S, {}));
     return 0;
 %}
 
-a_expr := NUM(N)
-%{
-    auto v = std::atoi(N.text.c_str());
-    return v;
-%}
 
-a_expr := STRING(S)
-%{
-    return S.text;
-%}
-
-a_expr := ID(I)
-%{
-    return getVar(I);
-%}
-
-a_expr := ID(I) xtuple(np)
+primary_expr := ID(I) xtuple(np)
 %{
     auto p = go(np);
     auto& fd = getFunc(I);
@@ -697,13 +719,15 @@ a_expr := ID(I) xtuple(np)
         throw Error(I.pos.row, I.pos.col, I.pos.file, "parameter count mismatch");
     }
 
+    std::println("fn-call:{}", I.text);
     FunctionBlockGuard in(blocks);
     for(auto& ip : fd.in) {
         auto& ti = p.at(ip.name.text);
+        std::println("arg {}={}", ip.name.text, str(ti.val));
         addVar(ip.name, ti.val);
     }
 
-    WalkerNodeRef<stmt_block> body(*(fd.body));
+    NodeRef<stmt_block> body(*(fd.body));
     go(body);
     return getReturn();
 %}
@@ -768,17 +792,21 @@ type := STRING_TYPE(T)
     return T;
 %}
 
-
 IMPORT := "import";
 AS := "as";
+VAR := "var";
 
 IF := "if";
 ELSE := "else";
 WHILE := "while";
 RETURN := "return";
+PRINT := "print";
 
 INT_TYPE := "int";
 STRING_TYPE := "string";
+
+ID := "[a-zA-Z_][a-zA-Z0-9_]*";
+STRING := "(!\")[^\"]*(!\")";
 
 LBRACKET := "\(";
 RBRACKET := "\)";
@@ -786,20 +814,12 @@ LCURLY := "\{";
 RCURLY := "\}";
 SEMI := ";";
 COMMA := ",";
-VAR := "var";
-PRINT := "print";
-
-ID := "[A-Za-z][A-Za-z0-9_]*";
-STRING := "(!\")[^\"]*(!\")";
-NUM := "[0-9]+";
-
-PERCENT := "%";
-STAR := "\*";
-FSLASH := "/";
-PLUS := "\+";
-MINUS := "-";
 
 ASSIGN := "=";
+
+AND := "&&";
+OR := "\|\|";
+NOT := "!";
 
 EQ := "==";
 NEQ := "!=";
@@ -808,9 +828,14 @@ GTE := ">=";
 LT := "<";
 GT := ">";
 
-AND := "&&";
-OR := "\|\|";
-NOT := "!";
+STAR := "\*";
+FSLASH := "/";
+PERCENT := "%";
+PLUS := "\+";
+MINUS := "-";
+
+NUM := "[0-9]+";
+WS := "\s"!;
 
 SLCOMMENT := "//.*\n"!;
 ENTER_MLCOMMENT := "/\*"! [ML_COMMENT_MODE];
