@@ -257,6 +257,11 @@
         return *dt;
     }
 
+    inline const DataType* hasVar(const Token& name) {
+        auto dt = _getVar(name.text);
+        return dt;
+    }
+
     inline void addVar(const Token& name, const TupleItem& ti) {
         if(_getVar(name.text) != nullptr) {
             throw Error(name.pos.row, name.pos.col, name.pos.file, "variable already defined:{}", name.text);
@@ -381,15 +386,17 @@ stmt_block := LCURLY stmts(s) RCURLY
 
 stmt_block := LCURLY RCURLY;
 
-stmt := IMPORT STRING(F) AS ID(N) SEMI
+stmt := IMPORT string_primitive(sp) AS ID(N) SEMI
 %{
-    addImport(F, N.text);
+    auto s = go(sp);
+    addImport(s, N.text);
 %}
 
-stmt := IMPORT STRING(F) SEMI
+stmt := IMPORT string_primitive(sp) SEMI
 %{
-    auto n = std::filesystem::path(F.text).stem();
-    addImport(F, n.string());
+    auto s = go(sp);
+    auto n = std::filesystem::path(s.text).stem();
+    addImport(s, n.string());
 %}
 
 stmt := argsx(out) ID(NAME) argsx(in) stmt_block(body)
@@ -668,7 +675,24 @@ primary_expr := LBRACKET expr(e) RBRACKET
     return v;
 %}
 
-primary_expr := ID(I)
+primary_expr := qualified_id(qid)
+%{
+    auto q = go(qid);
+    return q;
+%}
+
+%function qualified_id -> DataType;
+qualified_id := qualified_id(qid) DOT ID(I)
+%{
+    auto q = go(qid);
+    if(auto t = q.ptr<Tuple>()) {
+        auto val = t->at(I.text).val;
+        return val;
+    }
+    throw Error(I.pos.row, I.pos.col, I.pos.file, "not a compound type");
+%}
+
+qualified_id := ID(I)
 %{
     return getVar(I);
 %}
@@ -679,36 +703,58 @@ primary_expr := NUM(N)
     return v;
 %}
 
-primary_expr := STRING(N)
+primary_expr := PRINT(P) LBRACKET string_primitive(sp) RBRACKET
 %{
-    auto v = N.text;
-    return v;
-%}
-
-primary_expr := PRINT LBRACKET STRING(S) COMMA tuple(np) RBRACKET
-%{
-    auto p = go(np);
-    std::print("1>{}", fmt(S, p));
-    return 0;
-%}
-
-primary_expr := PRINT LBRACKET STRING(S) COMMA expr(np) RBRACKET
-%{
-    auto p = go(np);
-    if(auto v = p.ptr<Tuple>()) {
-        std::print("2>{}", fmt(S, *v));
+    auto s = go(sp);
+    if(P.text == "print") {
+        std::print("{}", s.text);
     }else{
-        std::print("{}:<not a tuple>", S.text);
+        std::println("{}", s.text);
     }
     return 0;
 %}
 
-primary_expr := PRINT LBRACKET STRING(S) RBRACKET
+primary_expr := string_primitive(s)
 %{
-    std::print("3>{}", fmt(S, {}));
-    return 0;
+    auto str = go(s);
+    return str.text;
 %}
 
+%function string_primitive -> Token;
+string_primitive := string_parts(segments)
+%{
+    auto str = go(segments);
+    return str;
+%}
+
+%function string_parts -> Token;
+string_parts := string_parts(ns) string_part(sp)
+%{
+    auto str = go(ns);
+    auto s = go(sp);
+    str.text += s.text;
+    return str;
+%}
+
+string_parts := string_part(sp)
+%{
+    auto s = go(sp);
+    return s;
+%}
+
+%function string_part -> Token;
+string_part := STRING_SEGMENT(S)
+%{
+    return S;
+%}
+
+string_part := ENTER_STRING_ARG expr(e) LEAVE_STRING_ARG
+%{
+    auto val = go(e);
+    Token R;
+    R.text = str(val);
+    return R;
+%}
 
 primary_expr := ID(I) xtuple(np)
 %{
@@ -801,21 +847,44 @@ ELSE := "else";
 WHILE := "while";
 RETURN := "return";
 PRINT := "print";
+PRINT := "println";
 
 INT_TYPE := "int";
 STRING_TYPE := "string";
 
-ID := "[a-zA-Z_][a-zA-Z0-9_]*";
-STRING := "(!\")[^\"]*(!\")";
-
-LBRACKET := "\(";
-RBRACKET := "\)";
 LCURLY := "\{";
 RCURLY := "\}";
 SEMI := ";";
 COMMA := ",";
 
 ASSIGN := "=";
+ENTER_STRING := "(!\")"! [STRING_MODE];
+
+%lexer_include EXPR_MODE;
+
+SLCOMMENT := "//.*\n"!;
+ENTER_MLCOMMENT := "/\*"! [ML_COMMENT_MODE];
+
+%lexer_mode ML_COMMENT_MODE;
+ENTER_MLCOMMENT := "/\*"! [ML_COMMENT_MODE];
+LEAVE_MLCOMMENT := "\*/"! [^];
+CMT := ".*"!;
+
+%lexer_mode STRING_MODE;
+LEAVE_STRING := "(!\")"! [^];
+STRING_SEGMENT := "[^\"\{]+";
+ENTER_STRING_ARG := "\{" [STRING_ARG_MODE];
+
+%lexer_mode STRING_ARG_MODE;
+LEAVE_STRING_ARG := "\}" [^];
+%lexer_include EXPR_MODE;
+
+%lexer_mode EXPR_MODE;
+ID := "[a-zA-Z_][a-zA-Z0-9_]*";
+
+LBRACKET := "\(";
+RBRACKET := "\)";
+DOT := "\.";
 
 AND := "&&";
 OR := "\|\|";
@@ -836,12 +905,3 @@ MINUS := "-";
 
 NUM := "[0-9]+";
 WS := "\s"!;
-
-SLCOMMENT := "//.*\n"!;
-ENTER_MLCOMMENT := "/\*"! [ML_COMMENT_MODE];
-WS := "\s"!;
-
-%lexer_mode ML_COMMENT_MODE;
-ENTER_MLCOMMENT := "/\*"! [ML_COMMENT_MODE];
-LEAVE_MLCOMMENT := "\*/"! [^];
-CMT := ".*"!;

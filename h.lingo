@@ -1,0 +1,6 @@
+(int i, int j) multiply(int x, int y) {
+    println("hi8.1\n");
+    println("multiply:{x} + {y}\n");
+    println("hi8.2\n");
+    return (i=x * y, j = x / y);
+}

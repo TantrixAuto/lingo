@@ -12,12 +12,12 @@ var v8 = var1;
 
 if(v8 > 10) {
     v8 = var1;
-    print("hi1\n");
+    println("hi1");
 }
 
 if(var2 < 10) {
     v8 = var2;
-    print("hi2\n");
+    println("hi2");
 }else{
     v8 = var3;
 }
@@ -35,23 +35,27 @@ This is a inner ML comment
 
 // this is a SL comment
 
-print("hi3: from {a} and {b}\n", a=10, b=12);
+println("hi3: from {var1} and {var2}");
 
 var idx = 2;
 while(idx < 10) {
     idx = idx + 1;
-    print("hi4:{a}\n", a=idx);
+    println("hi4:{idx}");
 }
-print("hi5\n");
+println("hi5");
 
 (int i, int j) add(int x, int y) {
-    print("hi6.1\n");
-    print("adding:{x} + {y}\n", x=x, y=y);
-    print("hi6.2\n");
+    println("hi6.1");
+    println("adding:{x} + {y}");
+    println("hi6.2");
     return (i=x + y, j = y - x);
 }
 
-print("hi7\n");
+println("hi7");
 var r = add(x=1, y=2);
-print("hi8\n");
-print("added:i={i}, j={j}\n", r);
+println("added:i={r.i}, j={r.j}");
+var i = r.i;
+println("added:i={i}");
+
+//var s = multiply(x=1, y=2);
+//println("added:i={i}, j={j}", s);
